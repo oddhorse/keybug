@@ -102,16 +102,15 @@ void ble_task()
 		if (frame_len == 5)
 		{
 #ifdef DEV_BUILD
+			int16_t value = (int16_t)((uint16_t)frame_buf[2] | ((uint16_t)frame_buf[3] << 8));
 			Serial.print("event_type (u8): ");
-			Serial.print(frame_buf[0]);
+			Serial.print(frame_buf[0], HEX);
 			Serial.print("; code (u8): ");
-			Serial.print(frame_buf[1]);
+			Serial.print(frame_buf[1], HEX);
 			Serial.print("; value (i16): ");
-			Serial.print(frame_buf[2]);
-			Serial.print("; value (i16): ");
-			Serial.print(frame_buf[3]);
+			Serial.print(value);
 			Serial.print("; modifiers (u8): ");
-			Serial.print(frame_buf[4]);
+			Serial.print(frame_buf[4], HEX);
 			Serial.print("\n");
 #endif
 
