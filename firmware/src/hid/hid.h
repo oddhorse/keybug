@@ -10,4 +10,4 @@ void hid_init();
 // loop() iteration.
 void hid_task();
 
-void process_keystroke(uint8_t frame_buf[5]);
+void enqueue_frame(uint8_t frame_buf[7]);

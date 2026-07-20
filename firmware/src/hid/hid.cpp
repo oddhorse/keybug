@@ -87,66 +87,21 @@ void hid_init()
 
 static uint8_t held_keys[6] = {0};
 static uint8_t held_modifiers = 0;
-static bool state_dirty = false;
 
 static void send_keyboard_state()
 {
-
-	if (usb_hid.ready())
-	{
-		state_dirty = false;
 #ifdef DEV_BUILD
-		Serial.print("sending event as keyboard. held_keys: { ");
-		for (size_t i = 0; i < 6; i++)
-		{
-			Serial.print(held_keys[i], HEX);
-			Serial.print(" ");
-		}
-		Serial.print("}; held_modifiers: ");
-		Serial.print(held_modifiers, HEX);
-		Serial.print("\n");
+	Serial.print("sending event as keyboard. held_keys: { ");
+	for (size_t i = 0; i < 6; i++)
+	{
+		Serial.print(held_keys[i], HEX);
+		Serial.print(" ");
+	}
+	Serial.print("}; held_modifiers: ");
+	Serial.print(held_modifiers, HEX);
+	Serial.print("\n");
 #endif
-		usb_hid.keyboardReport(RID_KEYBOARD, held_modifiers, held_keys);
-	}
-	else
-	{
-#ifdef DEV_BUILD
-		Serial.println("usb_hid not ready!!! deferring...");
-#endif
-		state_dirty = true;
-	}
-}
-
-void hid_task()
-{
-#ifdef TINYUSB_NEED_POLLING_TASK
-	// Manual call tud_task since it isn't called by Core's background
-	TinyUSBDevice.task();
-#endif
-
-	// not enumerated()/mounted() yet: nothing to do
-	if (!TinyUSBDevice.mounted())
-	{
-		return;
-	}
-
-	// poll gpio once each 10 ms
-	static uint32_t ms = 0;
-	if (millis() - ms > 10)
-	{
-		ms = millis();
-		send_hid_test();
-	}
-
-	if (state_dirty == true)
-	{
-		send_keyboard_state();
-	}
-}
-
-static void send_cleared_keyboard_state()
-{
-	usb_hid.keyboardReport(RID_KEYBOARD, 0, 0);
+	usb_hid.keyboardReport(RID_KEYBOARD, held_modifiers, held_keys);
 }
 
 void hid_key_down(uint8_t keycode, uint8_t modifiers)
@@ -184,10 +139,103 @@ void hid_key_up(uint8_t keycode, uint8_t modifiers)
 	send_keyboard_state();
 }
 
-void process_keystroke(uint8_t frame_buf[5])
+void hid_mouse_move(uint16_t dx, uint16_t dy)
 {
-	if (frame_buf[0] == 1)
-		hid_key_down(frame_buf[1], frame_buf[4]);
-	else if (frame_buf[0] == 2)
-		hid_key_up(frame_buf[1], frame_buf[4]);
+	usb_hid.mouseMove(RID_MOUSE, dx, dy);
+}
+
+/**
+ * we're making a queue so we can process all the frames in time
+ */
+#define QUEUE_SIZE 16
+static uint8_t queue[QUEUE_SIZE][7];
+static uint8_t queue_head = 0;
+static uint8_t queue_tail = 0;
+static uint8_t queue_count = 0;
+
+static bool queue_push(const uint8_t frame[7])
+{
+	if (queue_count == QUEUE_SIZE)
+		return false;
+	memcpy(queue[queue_tail], frame, 7);
+	queue_tail = (queue_tail + 1) % QUEUE_SIZE;
+	queue_count++;
+	return true;
+}
+
+static bool queue_pop(uint8_t frame[7])
+{
+	if (queue_count == 0)
+		return false;
+	memcpy(frame, queue[queue_head], 7);
+	queue_head = (queue_head + 1) % QUEUE_SIZE;
+	queue_count--;
+	return true;
+}
+
+/**
+ * receives input frame from ble stream and queues it
+ */
+void enqueue_frame(uint8_t frame[7])
+{
+	bool push_success = queue_push(frame);
+	if (!push_success)
+	{
+		// [TODO] handle push failure
+	}
+}
+
+void process_frame(uint8_t frame[7])
+{
+	// Frame: [0 event_type: u8][1 code: u8][2/3 value: i16][4/5 value2: i16][6 modifiers: u8] = 7 bytes
+	// key down
+	if (frame[0] == 1)
+		hid_key_down(frame[1], frame[6]);
+	// key up
+	else if (frame[0] == 2)
+		hid_key_up(frame[1], frame[6]);
+	// mouse move
+	else if (frame[0] == 3)
+	{
+		int16_t value = (int16_t)((uint16_t)frame[2] | ((uint16_t)frame[3] << 8));
+		int16_t value2 = (int16_t)((uint16_t)frame[4] | ((uint16_t)frame[5] << 8));
+		hid_mouse_move(value, value2);
+	}
+}
+
+void hid_task()
+{
+#ifdef TINYUSB_NEED_POLLING_TASK
+	// Manual call tud_task since it isn't called by Core's background
+	TinyUSBDevice.task();
+#endif
+
+	// not enumerated()/mounted() yet: nothing to do
+	if (!TinyUSBDevice.mounted())
+	{
+		return;
+	}
+
+	// poll gpio once each 10 ms
+	static uint32_t ms = 0;
+	if (millis() - ms > 10)
+	{
+		ms = millis();
+		send_hid_test();
+	}
+
+	// process frames whenever usb_hid is ready
+	if (usb_hid.ready())
+	{
+		uint8_t pulled_frame[7];
+		// if queue pop was successful, process the frame pulled
+		if (queue_pop(pulled_frame))
+			process_frame(pulled_frame);
+	}
+	else
+	{
+#ifdef DEV_BUILD
+		Serial.println("usb_hid not ready! waiting...");
+#endif
+	}
 }

@@ -29,9 +29,9 @@ EVT_MOUSE_MOVE = 0x03
 EVT_MOUSE_BTN  = 0x04
 EVT_SCROLL     = 0x05
 
-# Frame: [event_type: u8][code: u8][value: i16][modifiers: u8] = 5 bytes
-def make_frame(event_type, code=0, value=0, modifiers=0):
-	return struct.pack("<BBhB", event_type, code, value, modifiers)
+# Frame: [event_type: u8][code: u8][value: i16][value2: i16][modifiers: u8] = 7 bytes
+def make_frame(event_type, code=0, value=0, value2=0, modifiers=0):
+	return struct.pack("<BBhhB", event_type, code, value, value2, modifiers)
 
 # ── Modifier tracking ─────────────────────────────────────────────────────────
 
@@ -235,10 +235,7 @@ def on_mouse_move_delta(x, y):
 	_last_mouse = (x, y)
 	if dx == 0 and dy == 0:
 		return
-	# clamp to i8 range per axis, send two frames if needed
-	dx = max(-127, min(127, dx))
-	dy = max(-127, min(127, dy))
-	enqueue(make_frame(EVT_MOUSE_MOVE, code=dx, value=dy))
+	enqueue(make_frame(EVT_MOUSE_MOVE, value=dx, value2=dy))
 
 def on_mouse_click(x, y, button, pressed):
 	btn = MOUSE_BUTTON_MAP.get(button, 0)
@@ -291,7 +288,7 @@ async def main():
 			on_scroll=on_mouse_scroll,
 		)
 		kb_listener.start()
-		#ms_listener.start()
+		ms_listener.start()
 
 		try:
 			await send_loop(client)

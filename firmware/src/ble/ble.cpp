@@ -88,33 +88,36 @@ static void startAdv(void)
 	Bluefruit.Advertising.start(0);				// 0 = Don't stop advertising after n seconds
 }
 
-static uint8_t frame_buf[5];
+static uint8_t frame_buf[7];
 static uint8_t frame_len = 0;
 
 void ble_task()
 {
 
 	// Capture from BLEUART and dispatch as keystrokes
-	// frame structure: [event_type: u8][code: u8][value: i16][modifiers: u8]
+	// frame structure: [event_type: u8][code: u8][value: i16][value2: i16][modifiers: u8]
 	while (bleuart.available())
 	{
 		frame_buf[frame_len++] = bleuart.read();
-		if (frame_len == 5)
+		if (frame_len == 7)
 		{
 #ifdef DEV_BUILD
 			int16_t value = (int16_t)((uint16_t)frame_buf[2] | ((uint16_t)frame_buf[3] << 8));
+			int16_t value2 = (int16_t)((uint16_t)frame_buf[4] | ((uint16_t)frame_buf[5] << 8));
 			Serial.print("event_type (u8): ");
 			Serial.print(frame_buf[0], HEX);
 			Serial.print("; code (u8): ");
 			Serial.print(frame_buf[1], HEX);
 			Serial.print("; value (i16): ");
 			Serial.print(value);
+			Serial.print("; value2 (i16): ");
+			Serial.print(value2);
 			Serial.print("; modifiers (u8): ");
-			Serial.print(frame_buf[4], HEX);
+			Serial.print(frame_buf[6], HEX);
 			Serial.print("\n");
 #endif
 
-			process_keystroke(frame_buf); // decode + act
+			enqueue_frame(frame_buf); // decode + act
 			frame_len = 0;
 		}
 	}
