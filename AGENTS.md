@@ -19,22 +19,34 @@ smaller/explain-first option. This applies regardless of which agent/tool is rea
 
 ## Current state (update as milestones land)
 
-- **Milestone 0 (BLE transport validation): in progress.**
+- **Milestone 0 (BLE transport validation): done.** **Milestone 1 (full input relay): mostly
+  working end-to-end, still hacky.**
   - Firmware: `firmware/src/ble/ble.cpp` brings up Bluefruit's `BLEUart` (Adafruit's Nordic
     UART Service wrapper — standard NUS UUIDs, no need to hand-roll the GATT service). Advertises
-    as `"keybug!"`. Currently a raw serial-bridge demo: bytes in over BLEUART are treated as
-    ASCII and mapped through `ascii_to_hid` (in `ble.cpp`) to keystrokes via
-    `hid::send_keystroke`. **Does not yet decode the spec's 5-byte binary frame format** —
-    that's still to build.
+    as `"keybug!"`. Decodes the 7-byte binary frame format (see Frame Format below — this grew
+    from the originally-planned 5 bytes to fit a second `i16` for mouse y-delta) and pushes each
+    frame onto a small ring buffer (`firmware/src/hid/hid.cpp`, `QUEUE_SIZE 16`) so `hid_task()`
+    can drain it independent of the BLE receive callback.
   - `firmware/src/hid/hid.cpp` has the TinyUSB HID composite device (keyboard + mouse +
-    consumer control) and a demo button handler carried over from the stock example, plus
-    `send_keystroke()` used by the BLE side.
+    consumer control) fully wired for **keyboard** (6-key rollover state tracked in
+    `held_keys`/`held_modifiers`) and **mouse move**. Mouse button and scroll frames are sent by
+    the Python client but `process_frame()` doesn't handle `EVT_MOUSE_BTN`/`EVT_SCROLL` yet —
+    that dispatch still needs to be added.
   - `firmware/platformio.ini` only lists `Adafruit DotStar` + `Wire` in `lib_deps` — this is
     correct as-is. Bluefruit/TinyUSB/LittleFS come bundled with the Adafruit nRF52 Arduino core
     (selected via `platform = nordicnrf52` / `framework = arduino`), they're not separate
     PlatformIO lib deps.
-  - `macos/main.py` is still the `uv init` placeholder — scan/connect/send-test-frame script not
-    written yet.
+  - `macos-python/main.py` (folder renamed from `macos/`) is no longer a placeholder: it's a
+    working BLE central + global input listener using `bleak` + `pynput` (not a hand-rolled
+    `CGEventTap`, though `pynput` uses Quartz/CGEventTap under the hood on macOS). Captures
+    keyboard + mouse via `pynput` with `suppress=True`, serializes to the 7-byte frame, queues
+    thread-safely into an `asyncio.Queue`, and writes to the NUS RX characteristic with
+    `response=False`. No BLE bonding/allowlist yet — connects to whatever's advertising as
+    `"keybug!"`.
+  - `keybug/` — a Swift/SwiftUI macOS app (Xcode project, `keybug.xcodeproj`) has been scaffolded
+    ahead of schedule for the eventual Milestone 4-5 rewrite. Currently just the default
+    `uv`-equivalent template (`keybugApp.swift` + `ContentView.swift`, "Hello, world!") — no
+    KeyBug logic ported over yet. See "Open Questions" for why this exists before Milestone 4.
 - `helper/` (Milestone 5 clipboard helper binary) does not exist yet.
 
 ## Hardware
@@ -89,13 +101,16 @@ keybug/
 │   ├── platformio.ini
 │   └── src/
 │       ├── main.cpp
-│       ├── ble/            # BLE peripheral, GATT service, bonding
-│       ├── hid/             # USB HID report construction, descriptors
-│       ├── msc/             # USB MSC callbacks, LittleFS integration
-│       └── clip/            # /clip file watcher, BLE send
-├── macos/                  # Operator laptop control app (Python/uv)
+│       ├── ble/            # BLE peripheral, NUS uart, frame decode + queue
+│       ├── hid/             # USB HID composite device, report construction
+│       ├── msc/             # USB MSC callbacks, LittleFS integration (not started)
+│       └── clip/            # /clip file watcher, BLE send (not started)
+├── macos-python/           # Operator laptop control app, Milestones 0-1 (Python/uv)
 │   ├── pyproject.toml
 │   └── main.py
+├── keybug/                 # Operator laptop control app, Milestones 4-5 (Swift/SwiftUI, Xcode)
+│   ├── keybug.xcodeproj
+│   └── keybug/
 ├── helper/                 # Optional host-side clipboard helper binary (Milestone 5, not yet created)
 │   ├── windows/
 │   ├── macos/
@@ -103,9 +118,9 @@ keybug/
 └── AGENTS.md
 ```
 
-The `ble/`, `hid/`, `msc/`, `clip/` subfolders under `firmware/src/` don't exist yet — they're
-the intended organization once BLE/MSC work starts (Milestone 1+), not a requirement to
-pre-create.
+The `msc/` and `clip/` subfolders under `firmware/src/` don't exist yet — they're the intended
+organization once virtual-drive work starts (Milestone 2+), not a requirement to pre-create.
+`ble/` and `hid/` already exist and are where Milestone 0-1 work landed.
 
 ## Feature 1: BLE Input Relay
 
@@ -115,30 +130,37 @@ it as a standard USB HID report to the host machine. The host machine sees a nor
 keyboard and mouse.
 
 ### Laptop side
-- Global low-level input listener (`CGEventTap` on macOS), requires Accessibility permission
+- Global low-level input listener — implemented via `pynput` (`macos-python/main.py`), which
+  itself rides on Quartz/`CGEventTap` on macOS, rather than a hand-rolled event tap
 - Listener consumes events so they do not also act on the operator's own machine
+  (`suppress=True`)
 - Each event immediately serialized into a fixed binary frame and sent over BLE (no batching)
 - Mouse: send deltas immediately per callback
 
 ### BLE transport
-- Custom GATT service using Nordic UART Service (NUS) UUID pair
+- Nordic UART Service (NUS) UUID pair via Bluefruit's `BLEUart` wrapper — not a hand-rolled
+  custom GATT service, the standard NUS characteristics are sufficient
 - Write Without Response for all event frames — no ACK round trip, minimizes latency
-- Connection parameters to request on connect:
-  - Interval: 6 units (= 7.5ms, BLE spec minimum, units are 1.25ms steps)
-  - Slave latency: 0
-  - Supervision timeout: 4000ms
-- BLE bonding: allowlist locked to operator laptop's BLE address only
+- Connection parameters requested on connect: `Bluefruit.Periph.setConnInterval(6, 12)` (7.5–15ms
+  range); slave latency / supervision timeout not yet explicitly tuned
+- BLE bonding / allowlist: **not implemented yet** — board currently accepts a connection from
+  any central that finds it advertising as `"keybug!"`
 
-### Frame format (binary, fixed width, 5 bytes)
+### Frame format (binary, fixed width, 7 bytes)
 ```
-[event_type: u8][code: u8][value: i16][modifiers: u8]
+[event_type: u8][code: u8][value: i16][value2: i16][modifiers: u8]
 ```
 - `event_type`: `0x01` key_down, `0x02` key_up, `0x03` mouse_move, `0x04` mouse_button, `0x05` scroll
 - `code`: HID usage code (keys) or button index (mouse)
-- `value`: signed delta for mouse_move/scroll, 0 for key events
-- `modifiers`: bitmask — shift/ctrl/alt/cmd/fn
+- `value` / `value2`: signed deltas — mouse_move uses both (dx, dy); scroll uses `value` (dy)
+  only; 0 for key events. (Grew from the originally-planned single `i16` to fit mouse dx *and*
+  dy in one frame.)
+- `modifiers`: bitmask — shift/ctrl/alt/cmd/fn (left/right variants each get their own bit — see
+  `MOD_LEFT_*`/`MOD_RIGHT_*` in `macos-python/main.py`)
 
-Decode on firmware side with a static struct cast — no string parsing, no dynamic allocation.
+Decoded on the firmware side as a raw 7-byte ring buffer entry (`firmware/src/hid/hid.cpp`), not
+a struct cast, but same no-string-parsing/no-dynamic-allocation intent. Mouse button and scroll
+frames are sent by the laptop but not yet dispatched by `process_frame()` on the firmware side.
 
 ### Firmware side
 - On BLE receive callback: decode frame, immediately construct and send USB HID report
@@ -222,23 +244,24 @@ both directions.
 
 ## Build Order
 
-### Milestone 0 — BLE transport validation (Python test script)
-- [ ] `macos/` Python project with `uv`, dependencies: `bleak`, `pynput`
-- [ ] Script scans for KeyBug board by NUS service UUID, connects
-- [ ] On connect: send hardcoded test frames (key_down 'a', key_up, mouse delta) over NUS RX
-      characteristic
-- [ ] Firmware receives frames, decodes, dispatches to `usb_hid` — verify output appears on
-      host machine
-- [ ] No input capture yet — purely a BLE send/receive test harness
+### Milestone 0 — BLE transport validation (Python test script) — done
+- [x] `macos-python/` Python project with `uv`, dependencies: `bleak`, `pynput`
+- [x] Script scans for KeyBug board by name (`"keybug!"`), connects
+- [x] On connect: send frames over NUS RX characteristic (grew from hardcoded test frames into
+      the real input-driven relay below)
+- [x] Firmware receives frames, decodes, dispatches to `usb_hid` — verified working on host
+- [x] (superseded) — real input capture landed alongside this milestone rather than after it
 
-### Milestone 1 — Full input relay
-- [ ] PlatformIO project, Adafruit nRF52 BSP, ItsyBitsy nRF52840 target
-- [ ] TinyUSB composite device: USB HID keyboard + mouse descriptors
-- [ ] BLE peripheral: custom GATT service, NUS characteristic, Write Without Response
-- [ ] BLE connection parameter negotiation (7.5ms interval, slave latency 0)
-- [ ] BLE address allowlist / bonding
-- [ ] macOS listener: CGEventTap, BLE central, frame serialization
-- [ ] End-to-end: keyboard and mouse input from MacBook appears on host machine
+### Milestone 1 — Full input relay — mostly done, still hacky
+- [x] PlatformIO project, Adafruit nRF52 BSP, ItsyBitsy nRF52840 target
+- [x] TinyUSB composite device: USB HID keyboard + mouse descriptors (+ consumer control)
+- [x] BLE peripheral: NUS characteristic (via `BLEUart`), Write Without Response
+- [x] BLE connection parameter negotiation — interval range set (6-12 units); slave latency /
+      supervision timeout not explicitly tuned yet
+- [ ] BLE address allowlist / bonding — not started, board accepts any central
+- [x] macOS listener: `pynput` (not raw `CGEventTap`) + `bleak` BLE central + frame serialization
+- [x] End-to-end: keyboard fully working. Mouse move works. Mouse button/scroll frames are sent
+      but firmware doesn't dispatch them yet (`process_frame()` gap in `hid.cpp`)
 
 ### Milestone 2 — Virtual drive, Tier 1 (local flash)
 - [ ] TinyUSB MSC added to composite device (HID + MSC simultaneously)
@@ -269,7 +292,10 @@ both directions.
 
 ## Open Questions
 
-- **macOS app stack**: Python for Milestones 0-1, Swift for Milestones 4-5
+- **macOS app stack**: Python (`macos-python/`) for Milestones 0-1, Swift (`keybug/`) for
+  Milestones 4-5. The Swift Xcode project has been scaffolded early (default SwiftUI template,
+  no logic ported yet) so it's ready to receive the port once Milestone 4 starts — this doesn't
+  change the intended build order.
 - **WiFi transport**: WiFi-direct preferred (no shared router needed)
 - **Drive size**: Report honest 2MB rather than lying about capacity
 - **Drive label**: TBD — something recognizable but not alarming to IT
