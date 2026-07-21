@@ -8,12 +8,20 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var ble = BLECentral()
+
     var body: some View {
         VStack {
             Image(systemName: "globe")
                 .imageScale(.large)
                 .foregroundStyle(.tint)
             Text("Hello, world!")
+            Button("Connect") {
+                ble.send(Frame(eventType: .keyDown, code: 0x0B))
+                ble.send(Frame(eventType: .keyUp, code: 0x0B))
+                ble.send(Frame(eventType: .keyDown, code: 0x0C))
+                ble.send(Frame(eventType: .keyUp, code: 0x0C))
+            }
         }
         .padding()
     }
