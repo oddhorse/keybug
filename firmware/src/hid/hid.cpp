@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "Adafruit_TinyUSB.h"
 #include "frame_queue.h"
+#include <frame.h>
 
 /* Demo button -> HID reports, moved as-is from the stock Adafruit example.
  * Depending on the board, the button pin and its active state (when
@@ -63,14 +64,14 @@ void hid_init()
 	usb_keyboard.setPollInterval(2);
 	usb_keyboard.setBootProtocol(HID_ITF_PROTOCOL_KEYBOARD);
 	usb_keyboard.setReportDescriptor(desc_keyboard_report, sizeof(desc_keyboard_report));
-	usb_keyboard.setStringDescriptor("TinyUSB HID Keyboard");
+	usb_keyboard.setStringDescriptor("keybug");
 	usb_keyboard.begin();
 
 	// HID Mouse
 	usb_mouse.setPollInterval(2);
 	usb_mouse.setBootProtocol(HID_ITF_PROTOCOL_MOUSE);
 	usb_mouse.setReportDescriptor(desc_mouse_report, sizeof(desc_mouse_report));
-	usb_mouse.setStringDescriptor("TinyUSB HID Keyboard");
+	usb_mouse.setStringDescriptor("mousebug");
 	usb_mouse.begin();
 
 	// If already enumerated, additional class driver begin() e.g msc, hid, midi won't take effect until re-enumeration
@@ -167,6 +168,7 @@ static int8_t clamp_i8(int16_t v)
 
 // Single-shot: clamps to what one HID report can carry. Doesn't split a large
 // delta across multiple reports/ticks — see AGENTS.md frame format notes.
+// TODO: implement splitting
 void hid_mouse_move(int16_t dx, int16_t dy)
 {
 	usb_mouse.mouseMove(0, clamp_i8(dx), clamp_i8(dy));
@@ -175,46 +177,50 @@ void hid_mouse_move(int16_t dx, int16_t dy)
 /**
  * we're making a queue so we can process all the frames in time
  */
-
 static FrameQueue<16> kbd_queue;
 static FrameQueue<16> mouse_queue;
 
 /**
  * receives input frame from ble stream and queues it
  */
-void enqueue_frame(uint8_t frame[7])
+void enqueue_frame(uint8_t raw_frame[7])
 {
+	Frame frame = parse_frame(raw_frame);
 	bool push_success;
-	if (frame[0] < 3)
+
+	switch (frame.event_type)
 	{
+	case EventType::KeyDown:
+	case EventType::KeyUp:
 		push_success = kbd_queue.push(frame);
-	}
-	else
-	{
+		break;
+	default:
 		push_success = mouse_queue.push(frame);
+		break;
 	}
 
 	if (!push_success)
 	{
-		// [TODO] handle push failure
+		// TODO handle push failure
 	}
 }
 
-void process_frame(uint8_t frame[7])
+// TODO finish all the event types
+void process_frame(const Frame &frame)
 {
-	// Frame: [0 event_type: u8][1 code: u8][2/3 value: i16][4/5 value2: i16][6 modifiers: u8] = 7 bytes
-	// key down
-	if (frame[0] == 1)
-		hid_key_down(frame[1], frame[6]);
-	// key up
-	else if (frame[0] == 2)
-		hid_key_up(frame[1], frame[6]);
-	// mouse move
-	else if (frame[0] == 3)
+	switch (frame.event_type)
 	{
-		int16_t value = (int16_t)((uint16_t)frame[2] | ((uint16_t)frame[3] << 8));
-		int16_t value2 = (int16_t)((uint16_t)frame[4] | ((uint16_t)frame[5] << 8));
-		hid_mouse_move(value, value2);
+	case EventType::KeyDown:
+		hid_key_down(frame.code, frame.modifiers);
+		break;
+	case EventType::KeyUp:
+		hid_key_up(frame.code, frame.modifiers);
+		break;
+	case EventType::MouseMove:
+		hid_mouse_move(frame.value, frame.value2);
+		break;
+	default:
+		break;
 	}
 }
 
@@ -246,7 +252,7 @@ void hid_task()
 	{
 		if (usb_keyboard.ready())
 		{
-			uint8_t pulled_frame[7];
+			Frame pulled_frame;
 			// if queue pop was successful, process the frame pulled
 			if (kbd_queue.pop(pulled_frame))
 				process_frame(pulled_frame);
@@ -264,7 +270,7 @@ void hid_task()
 	{
 		if (usb_mouse.ready())
 		{
-			uint8_t pulled_frame[7];
+			Frame pulled_frame;
 			// if queue pop was successful, process the frame pulled
 			if (mouse_queue.pop(pulled_frame))
 				process_frame(pulled_frame);

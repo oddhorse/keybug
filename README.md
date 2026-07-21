@@ -16,4 +16,13 @@ keyboard and mouse forwarder from a laptop to a physically plugged-in device via
 ## to-do
 
 * [ ] make a "release everything" switch that macos software component fires on quit that tells firmware to let up every key
-* [ ] build a queue for hid sends, so things don't get potentially lost when the keyboard state is overwritten while usb_hid is not ready
+* [x] build a queue for hid sends, so things don't get potentially lost when the keyboard state is overwritten while usb_hid is not ready
+* [ ] finish implementing the event type handling on firmware side for all types
+ 	* [x] 0x01 keyDown
+ 	* [x] 0x02 keyUp
+ 	* [ ] 0x03 mouseMove
+ 	* [ ] 0x04 mouseBtn
+ 	* [ ] 0x05 scroll
+ 	* [ ] 0x06 consumerDown
+ 	* [ ] 0x07 consumerUp
+ 	* [ ] 0x08 clear

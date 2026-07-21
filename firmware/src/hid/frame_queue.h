@@ -5,26 +5,27 @@
 
 #pragma once
 #include <Arduino.h>
+#include "frame.h"
 
 template <size_t Capacity>
 class FrameQueue
 {
 public:
-	bool push(const uint8_t frame[7])
+	bool push(const Frame &frame)
 	{
 		if (count_ == Capacity)
 			return false;
-		memcpy(queue_[tail_], frame, 7);
+		queue_[tail_] = frame;
 		tail_ = (tail_ + 1) % Capacity;
 		count_++;
 		return true;
 	}
 
-	bool pop(uint8_t frame[7])
+	bool pop(Frame &frame)
 	{
 		if (count_ == 0)
 			return false;
-		memcpy(frame, queue_[head_], 7);
+		frame = queue_[head_];
 		head_ = (head_ + 1) % Capacity;
 		count_--;
 		return true;
@@ -36,6 +37,6 @@ public:
 	}
 
 private:
-	uint8_t queue_[Capacity][7] = {};
+	Frame queue_[Capacity] = {};
 	uint8_t head_ = 0, tail_ = 0, count_ = 0;
 };

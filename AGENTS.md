@@ -153,10 +153,22 @@ environments, which only understand USB HID Boot Protocol.
 ```
 [event_type: u8][code: u8][value: i16][value2: i16][modifiers: u8]
 ```
-- `event_type`: `0x01` key_down, `0x02` key_up, `0x03` mouse_move, `0x04` mouse_button, `0x05` scroll
-- `code`: HID usage code (keys) or button index (mouse)
-- `value` / `value2`: signed deltas — mouse_move uses both (dx, dy); scroll uses `value` (dy)
-  only; 0 for key events. Kept at `i16` on the wire rather than shrunk to `i8` even though a
+
+| ID | Name | `code` | `value` (i16) | `value2` (i16) | `modifiers` |
+| --- | --- | --- | --- | --- | --- |
+| `0x01` | keyDown | HID usage code | 0 | 0 | modifier bitmask |
+| `0x02` | keyUp | HID usage code | 0 | 0 | modifier bitmask |
+| `0x03` | mouseMove | 0 | dx | dy | 0 |
+| `0x04` | mouseBtn | button bit | 1 = down, 0 = up | 0 | 0 |
+| `0x05` | scroll | 0 | vertical delta | horizontal delta | 0 |
+| `0x06` | consumerDown | 0 | 16-bit consumer usage | 0 | 0 |
+| `0x07` | consumerUp | 0 | 16-bit consumer usage | 0 | 0 |
+| `0x08` | clear | 0 | 0 | 0 | 0 |
+
+Named as `EventType` (`firmware/src/frame.h`) — see that file for the `enum class` + the `Frame`
+struct these fields map onto. Notes on the less obvious fields:
+
+- `mouseMove`/`scroll` deltas: kept at `i16` on the wire rather than shrunk to `i8` even though a
   single HID mouse report can only carry `int8_t` deltas (`mouseMove`/`mouseScroll` in
   `Adafruit_USBD_HID`) — the truncation point matters. BLE (7.5-15ms connection interval, one
   frame per `write_gatt_char`, no batching) is the expensive hop; USB HID polls every 2ms
@@ -165,13 +177,26 @@ environments, which only understand USB HID Boot Protocol.
   (`clamp_i8` in `hid.cpp`'s `hid_mouse_move`), **not** by splitting one large delta across
   multiple HID reports over successive `hid_task()` ticks. That splitting/chunking is deferred —
   today a delta beyond ±127 in one frame is clamped (movement capped, not lost via wraparound,
-  but also not fully replayed). Revisit if that capping is noticeable on fast swipes.
+  but also not fully replayed). Revisit if that capping is noticeable on fast swipes. Same ceiling
+  will apply to `scroll`'s new horizontal (`value2`/pan) component once that's dispatched.
+- `consumerDown`/`consumerUp`: media/volume keys. The usage code rides in `value` (i16) rather
+  than `code` (u8) because HID consumer control usage codes are 16-bit — too wide for the 1-byte
+  `code` field keyboard/mouse events use.
+- `clear`: all-fields-zero "reset everything" signal — e.g. clear all held keys/modifiers/mouse
+  buttons in one shot, for whatever gets the board into a known-good state.
 - `modifiers`: bitmask — shift/ctrl/alt/cmd/fn (left/right variants each get their own bit — see
   `MOD_LEFT_*`/`MOD_RIGHT_*` in `macos-python/main.py`)
 
 Decoded on the firmware side as a raw 7-byte ring buffer entry (`firmware/src/hid/hid.cpp`), not
-a struct cast, but same no-string-parsing/no-dynamic-allocation intent. Mouse button and scroll
+a struct cast, but same no-string-parsing/no-dynamic-allocation intent. `mouseBtn` and `scroll`
 frames are sent by the laptop but not yet dispatched by `process_frame()` on the firmware side.
+`consumerDown`/`consumerUp`/`clear` are newer additions to the spec (`frame.h`'s `EventType`
+enum already has them) — nothing sends or handles any of the three yet on either side, and there
+is currently no USB HID interface for consumer control at all (dropped when `hid.cpp` split into
+separate boot-protocol keyboard/mouse interfaces — see Firmware side notes below). Also worth
+noting: `enqueue_frame()`'s keyboard-vs-mouse queue routing (`frame[0] < 3` → keyboard queue,
+else → mouse queue) predates event types 6-8 and will silently misroute them once anything
+actually sends those — needs revisiting alongside whatever handles consumer control/clear.
 
 ### Firmware side
 - On BLE receive callback: decode frame, immediately construct and send USB HID report

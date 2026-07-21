@@ -23,11 +23,14 @@ NUS_TX_CHAR    = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # board writes here
 
 # ── Frame types ───────────────────────────────────────────────────────────────
 
-EVT_KEY_DOWN   = 0x01
-EVT_KEY_UP     = 0x02
-EVT_MOUSE_MOVE = 0x03
-EVT_MOUSE_BTN  = 0x04
-EVT_SCROLL     = 0x05
+EVT_KEY_DOWN      = 0x01
+EVT_KEY_UP        = 0x02
+EVT_MOUSE_MOVE    = 0x03
+EVT_MOUSE_BTN     = 0x04
+EVT_SCROLL        = 0x05
+EVT_CONSUMER_DOWN = 0x06
+EVT_CONSUMER_UP   = 0x07
+EVT_CLEAR         = 0x08
 
 # Frame: [event_type: u8][code: u8][value: i16][value2: i16][modifiers: u8] = 7 bytes
 def make_frame(event_type, code=0, value=0, value2=0, modifiers=0):
