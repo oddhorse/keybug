@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "Adafruit_TinyUSB.h"
+#include "frame_queue.h"
 
 /* Demo button -> HID reports, moved as-is from the stock Adafruit example.
  * Depending on the board, the button pin and its active state (when
@@ -25,8 +26,16 @@ static uint8_t const desc_hid_report[] = {
 	TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(RID_MOUSE)),
 	TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(RID_CONSUMER_CONTROL))};
 
-// USB HID object.
-static Adafruit_USBD_HID usb_hid;
+// HID report descriptor using TinyUSB's template
+uint8_t const desc_keyboard_report[] = {
+	TUD_HID_REPORT_DESC_KEYBOARD()};
+
+uint8_t const desc_mouse_report[] = {
+	TUD_HID_REPORT_DESC_MOUSE()};
+
+// USB HID objects
+Adafruit_USBD_HID usb_keyboard;
+Adafruit_USBD_HID usb_mouse;
 
 static void send_hid_test()
 {
@@ -50,11 +59,19 @@ void hid_init()
 		TinyUSBDevice.begin(0);
 	}
 
-	// Set up HID
-	usb_hid.setPollInterval(2);
-	usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
-	usb_hid.setStringDescriptor("TinyUSB HID Composite");
-	usb_hid.begin();
+	// HID Keyboard
+	usb_keyboard.setPollInterval(2);
+	usb_keyboard.setBootProtocol(HID_ITF_PROTOCOL_KEYBOARD);
+	usb_keyboard.setReportDescriptor(desc_keyboard_report, sizeof(desc_keyboard_report));
+	usb_keyboard.setStringDescriptor("TinyUSB HID Keyboard");
+	usb_keyboard.begin();
+
+	// HID Mouse
+	usb_mouse.setPollInterval(2);
+	usb_mouse.setBootProtocol(HID_ITF_PROTOCOL_MOUSE);
+	usb_mouse.setReportDescriptor(desc_mouse_report, sizeof(desc_mouse_report));
+	usb_mouse.setStringDescriptor("TinyUSB HID Keyboard");
+	usb_mouse.begin();
 
 	// If already enumerated, additional class driver begin() e.g msc, hid, midi won't take effect until re-enumeration
 	if (TinyUSBDevice.mounted())
@@ -71,18 +88,18 @@ void hid_init()
 	// when this thing starts up the computer seems to think ctrl is held down until you send a ctrl on and ctrl off message
 	// here this fires a fake ctrl on and off sequence to stop that shit
 	// fire an all-clear on keyboard when usb hid is ready to start things off
-	while (!usb_hid.ready())
+	while (!usb_keyboard.ready())
 	{
 		delay(1);
 		Serial.println("usb_hid not ready yet... waiting to send false ctrl up report!");
 	}
-	usb_hid.keyboardReport(RID_KEYBOARD, 1, 0);
-	while (!usb_hid.ready())
+	usb_keyboard.keyboardReport(0, 1, 0);
+	while (!usb_keyboard.ready())
 	{
 		delay(1);
 		Serial.println("usb_hid not ready yet... waiting to send follow-up blank report!");
 	}
-	usb_hid.keyboardReport(RID_KEYBOARD, 0, 0);
+	usb_keyboard.keyboardReport(0, 0, 0);
 }
 
 static uint8_t held_keys[6] = {0};
@@ -101,7 +118,7 @@ static void send_keyboard_state()
 	Serial.print(held_modifiers, HEX);
 	Serial.print("\n");
 #endif
-	usb_hid.keyboardReport(RID_KEYBOARD, held_modifiers, held_keys);
+	usb_keyboard.keyboardReport(0, held_modifiers, held_keys);
 }
 
 void hid_key_down(uint8_t keycode, uint8_t modifiers)
@@ -139,46 +156,44 @@ void hid_key_up(uint8_t keycode, uint8_t modifiers)
 	send_keyboard_state();
 }
 
-void hid_mouse_move(uint16_t dx, uint16_t dy)
+static int8_t clamp_i8(int16_t v)
 {
-	usb_hid.mouseMove(RID_MOUSE, dx, dy);
+	if (v > 127)
+		return 127;
+	if (v < -128)
+		return -128;
+	return (int8_t)v;
+}
+
+// Single-shot: clamps to what one HID report can carry. Doesn't split a large
+// delta across multiple reports/ticks — see AGENTS.md frame format notes.
+void hid_mouse_move(int16_t dx, int16_t dy)
+{
+	usb_mouse.mouseMove(0, clamp_i8(dx), clamp_i8(dy));
 }
 
 /**
  * we're making a queue so we can process all the frames in time
  */
-#define QUEUE_SIZE 16
-static uint8_t queue[QUEUE_SIZE][7];
-static uint8_t queue_head = 0;
-static uint8_t queue_tail = 0;
-static uint8_t queue_count = 0;
 
-static bool queue_push(const uint8_t frame[7])
-{
-	if (queue_count == QUEUE_SIZE)
-		return false;
-	memcpy(queue[queue_tail], frame, 7);
-	queue_tail = (queue_tail + 1) % QUEUE_SIZE;
-	queue_count++;
-	return true;
-}
-
-static bool queue_pop(uint8_t frame[7])
-{
-	if (queue_count == 0)
-		return false;
-	memcpy(frame, queue[queue_head], 7);
-	queue_head = (queue_head + 1) % QUEUE_SIZE;
-	queue_count--;
-	return true;
-}
+static FrameQueue<16> kbd_queue;
+static FrameQueue<16> mouse_queue;
 
 /**
  * receives input frame from ble stream and queues it
  */
 void enqueue_frame(uint8_t frame[7])
 {
-	bool push_success = queue_push(frame);
+	bool push_success;
+	if (frame[0] < 3)
+	{
+		push_success = kbd_queue.push(frame);
+	}
+	else
+	{
+		push_success = mouse_queue.push(frame);
+	}
+
 	if (!push_success)
 	{
 		// [TODO] handle push failure
@@ -224,18 +239,41 @@ void hid_task()
 		send_hid_test();
 	}
 
-	// process frames whenever usb_hid is ready
-	if (usb_hid.ready())
+	// process frames whenever hids are ready
+
+	// if keyboard data is in queue
+	if (kbd_queue.get_count() != 0)
 	{
-		uint8_t pulled_frame[7];
-		// if queue pop was successful, process the frame pulled
-		if (queue_pop(pulled_frame))
-			process_frame(pulled_frame);
-	}
-	else
-	{
+		if (usb_keyboard.ready())
+		{
+			uint8_t pulled_frame[7];
+			// if queue pop was successful, process the frame pulled
+			if (kbd_queue.pop(pulled_frame))
+				process_frame(pulled_frame);
+		}
+		else
+		{
 #ifdef DEV_BUILD
-		Serial.println("usb_hid not ready! waiting...");
+			Serial.println("usb_keyboard not ready! waiting...");
 #endif
+		}
+	}
+
+	// if mouse data is in queue
+	if (mouse_queue.get_count() != 0)
+	{
+		if (usb_mouse.ready())
+		{
+			uint8_t pulled_frame[7];
+			// if queue pop was successful, process the frame pulled
+			if (mouse_queue.pop(pulled_frame))
+				process_frame(pulled_frame);
+		}
+		else
+		{
+#ifdef DEV_BUILD
+			Serial.println("usb_mouse not ready! waiting...");
+#endif
+		}
 	}
 }

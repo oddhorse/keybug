@@ -7,7 +7,9 @@ device classes that every OS already supports.
 
 Primary use case: a developer or technician who needs to control multiple computers without
 carrying a separate keyboard and mouse, or who needs to quickly transfer files or clipboard
-content to a machine they're working on.
+content to a machine they're working on. This includes bootloader/BIOS/UEFI troubleshooting —
+the board must work as keyboard and mouse before any OS (and thus any full HID driver stack)
+has loaded, which constrains the USB HID descriptor design (see Feature 1).
 
 ## Collaboration mode — read this first
 
@@ -127,7 +129,8 @@ organization once virtual-drive work starts (Milestone 2+), not a requirement to
 The MacBook captures keyboard and mouse events globally via a low-level input listener. Each
 event is serialized into a compact binary frame and sent over BLE to the board, which forwards
 it as a standard USB HID report to the host machine. The host machine sees a normal USB
-keyboard and mouse.
+keyboard and mouse — including in BIOS/UEFI setup, bootloaders (GRUB, etc.), and other pre-OS
+environments, which only understand USB HID Boot Protocol.
 
 ### Laptop side
 - Global low-level input listener — implemented via `pynput` (`macos-python/main.py`), which
@@ -153,8 +156,16 @@ keyboard and mouse.
 - `event_type`: `0x01` key_down, `0x02` key_up, `0x03` mouse_move, `0x04` mouse_button, `0x05` scroll
 - `code`: HID usage code (keys) or button index (mouse)
 - `value` / `value2`: signed deltas — mouse_move uses both (dx, dy); scroll uses `value` (dy)
-  only; 0 for key events. (Grew from the originally-planned single `i16` to fit mouse dx *and*
-  dy in one frame.)
+  only; 0 for key events. Kept at `i16` on the wire rather than shrunk to `i8` even though a
+  single HID mouse report can only carry `int8_t` deltas (`mouseMove`/`mouseScroll` in
+  `Adafruit_USBD_HID`) — the truncation point matters. BLE (7.5-15ms connection interval, one
+  frame per `write_gatt_char`, no batching) is the expensive hop; USB HID polls every 2ms
+  (`setPollInterval(2)`). So the full-precision delta crosses BLE in one frame, and firmware is
+  where the ±127 ceiling gets applied — currently via a single clamp per report
+  (`clamp_i8` in `hid.cpp`'s `hid_mouse_move`), **not** by splitting one large delta across
+  multiple HID reports over successive `hid_task()` ticks. That splitting/chunking is deferred —
+  today a delta beyond ±127 in one frame is clamped (movement capped, not lost via wraparound,
+  but also not fully replayed). Revisit if that capping is noticeable on fast swipes.
 - `modifiers`: bitmask — shift/ctrl/alt/cmd/fn (left/right variants each get their own bit — see
   `MOD_LEFT_*`/`MOD_RIGHT_*` in `macos-python/main.py`)
 
@@ -164,8 +175,18 @@ frames are sent by the laptop but not yet dispatched by `process_frame()` on the
 
 ### Firmware side
 - On BLE receive callback: decode frame, immediately construct and send USB HID report
-- Composite USB device: HID report descriptor covers keyboard, mouse, and consumer control
+- **Boot Protocol requirement (pre-OS support):** keyboard and mouse each need their own USB HID
+  interface with Boot Protocol enabled (`setBootProtocol`) and no Report ID on either — Boot
+  Protocol mode uses a fixed report layout with no ID byte, so a Report-ID-multiplexed composite
+  report (current single-interface design, one report per function distinguished by ID) is
+  invisible to a BIOS/bootloader's minimal HID driver. This rules out keeping keyboard + mouse on
+  one composite HID interface; `hid.cpp` now has separate `usb_keyboard`/`usb_mouse` interfaces
+  (split done — consumer control interface was dropped in the process, not yet reinstated).
+- Consumer control (media/volume keys) has no Boot Protocol equivalent — pre-OS environments
+  never read it, so it can stay on its own interface/report without this constraint.
 - USB HID polling: request 2ms interval in HID descriptor
+- Keyboard/mouse boot-protocol interfaces + eventual MSC interface (Milestone 2) share a limited
+  USB endpoint budget on the nRF52840 TinyUSB port — worth verifying headroom once MSC lands.
 
 ### Latency budget
 - BLE interval: ~7.5ms (negotiated)
