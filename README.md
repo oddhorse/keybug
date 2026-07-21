@@ -18,11 +18,24 @@ keyboard and mouse forwarder from a laptop to a physically plugged-in device via
 * [ ] make a "release everything" switch that macos software component fires on quit that tells firmware to let up every key
 * [x] build a queue for hid sends, so things don't get potentially lost when the keyboard state is overwritten while usb_hid is not ready
 * [ ] finish implementing the event type handling on firmware side for all types
- 	* [x] 0x01 keyDown
- 	* [x] 0x02 keyUp
- 	* [ ] 0x03 mouseMove
- 	* [ ] 0x04 mouseBtn
- 	* [ ] 0x05 scroll
- 	* [ ] 0x06 consumerDown
- 	* [ ] 0x07 consumerUp
- 	* [ ] 0x08 clear
+  * [x] 0x01 keyDown
+  * [x] 0x02 keyUp
+  * [ ] 0x03 mouseMove
+  * [ ] 0x04 mouseBtn
+  * [ ] 0x05 scroll
+  * [ ] 0x06 consumerDown
+  * [ ] 0x07 consumerUp
+  * [ ] 0x08 clear
+
+## reference
+
+| ID | Name | `code` | `value` (i16) | `value2` (i16) | `modifiers` |
+|---|---|---|---|---|---|
+| `0x01` | keyDown | HID usage code | 0 | 0 | modifier bitmask |
+| `0x02` | keyUp | HID usage code | 0 | 0 | modifier bitmask |
+| `0x03` | mouseMove | 0 | dx | dy | 0 |
+| `0x04` | mouseBtn | button bit | 1 = down, 0 = up | 0 | 0 |
+| `0x05` | scroll | 0 | vertical delta | horizontal delta | 0 |
+| `0x06` | consumerDown | 0 | 16-bit consumer usage | 0 | 0 |
+| `0x07` | consumerUp | 0 | 16-bit consumer usage | 0 | 0 |
+| `0x08` | clear | 0 | 0 | 0 | 0 |

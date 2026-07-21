@@ -13,24 +13,9 @@
 static const int pin = PIN_BUTTON1;
 static bool activeState = false;
 
-// Report ID
-enum
-{
-	RID_KEYBOARD = 1,
-	RID_MOUSE,
-	RID_CONSUMER_CONTROL, // Media, volume etc ..
-};
-
-// HID report descriptor using TinyUSB's template
-static uint8_t const desc_hid_report[] = {
-	TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(RID_KEYBOARD)),
-	TUD_HID_REPORT_DESC_MOUSE(HID_REPORT_ID(RID_MOUSE)),
-	TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(RID_CONSUMER_CONTROL))};
-
-// HID report descriptor using TinyUSB's template
+// HID report descriptors using TinyUSB's template
 uint8_t const desc_keyboard_report[] = {
 	TUD_HID_REPORT_DESC_KEYBOARD()};
-
 uint8_t const desc_mouse_report[] = {
 	TUD_HID_REPORT_DESC_MOUSE()};
 
@@ -166,12 +151,36 @@ static int8_t clamp_i8(int16_t v)
 	return (int8_t)v;
 }
 
+// hid devices send complete current button state as one bitmask, so we need to track state
+static uint8_t held_mouse_buttons = 0;
+
 // Single-shot: clamps to what one HID report can carry. Doesn't split a large
 // delta across multiple reports/ticks — see AGENTS.md frame format notes.
 // TODO: implement splitting
 void hid_mouse_move(int16_t dx, int16_t dy)
 {
-	usb_mouse.mouseMove(0, clamp_i8(dx), clamp_i8(dy));
+	// switched from usb_mouse.mouseMove() because that sends a whole report with held buttons as 0
+	usb_mouse.mouseReport(0, held_mouse_buttons, clamp_i8(dx), clamp_i8(dy), 0, 0);
+}
+
+void hid_mouse_press(uint8_t btn)
+{
+	held_mouse_buttons |= btn;
+	usb_mouse.mouseButtonPress(0, held_mouse_buttons);
+}
+
+void hid_mouse_release(uint8_t btn)
+{
+	held_mouse_buttons &= ~btn;
+	usb_mouse.mouseButtonPress(0, held_mouse_buttons);
+}
+
+void hid_mouse_handle(uint8_t btn, int16_t val)
+{
+	if (val == 1)
+		hid_mouse_press(btn);
+	else if (val == 0)
+		hid_mouse_release(btn);
 }
 
 /**
@@ -221,6 +230,8 @@ void process_frame(const Frame &frame)
 		hid_mouse_move(frame.value, frame.value2);
 		break;
 	case EventType::MouseButton:
+		hid_mouse_handle(frame.code, frame.value);
+		break;
 	case EventType::Scroll:
 	case EventType::ConsumerDown:
 	case EventType::ConsumerUp:
