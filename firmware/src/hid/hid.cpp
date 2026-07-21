@@ -194,6 +194,7 @@ void enqueue_frame(uint8_t raw_frame[7])
 	case EventType::KeyUp:
 		push_success = kbd_queue.push(frame);
 		break;
+	case EventType::MouseMove:
 	default:
 		push_success = mouse_queue.push(frame);
 		break;
@@ -219,6 +220,11 @@ void process_frame(const Frame &frame)
 	case EventType::MouseMove:
 		hid_mouse_move(frame.value, frame.value2);
 		break;
+	case EventType::MouseButton:
+	case EventType::Scroll:
+	case EventType::ConsumerDown:
+	case EventType::ConsumerUp:
+	case EventType::Clear:
 	default:
 		break;
 	}

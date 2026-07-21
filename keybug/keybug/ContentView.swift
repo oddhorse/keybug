@@ -9,6 +9,8 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var ble = BLECentral()
+    
+    @State private var capture = InputCapture()
 
     var body: some View {
         VStack {
@@ -24,6 +26,15 @@ struct ContentView: View {
             }
         }
         .padding()
+        .onAppear {
+            capture.onCaptureChanged = { on in
+                print("capturing: \(on)")
+            }
+            capture.onFrame = { frame in
+                ble.send(frame)
+            }
+            capture.start()
+        }
     }
 }
 

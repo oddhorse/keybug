@@ -33,4 +33,8 @@ enum EventType: UInt8 {
     case mouseMove = 0x03
     case mouseBtn = 0x04
     case scroll = 0x05
+    case consumerDown = 0x06
+    case consumerUp = 0x07
+    case clear = 0x08   // firmware releases all held keys/modifiers
 }
+
