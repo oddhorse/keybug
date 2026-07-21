@@ -36,7 +36,18 @@ final class InputCapture {
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
-            (1 << CGEventType.flagsChanged.rawValue)
+            (1 << CGEventType.flagsChanged.rawValue) |
+            (1 << CGEventType.mouseMoved.rawValue) |
+            (1 << CGEventType.leftMouseDown.rawValue) |
+            (1 << CGEventType.leftMouseUp.rawValue) |
+            (1 << CGEventType.leftMouseDragged.rawValue) |
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.rightMouseUp.rawValue) |
+            (1 << CGEventType.rightMouseDragged.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseUp.rawValue) |
+            (1 << CGEventType.otherMouseDragged.rawValue) |
+            (1 << CGEventType.scrollWheel.rawValue)
 
         // `refcon` smuggles `self` into the C callback, which can't capture context.
         let refcon = Unmanaged.passUnretained(self).toOpaque()
@@ -137,8 +148,32 @@ final class InputCapture {
                 log("MOD keycode \(keycode) -> mods \(String(format: "0x%02X", modifiers))")
                 onFrame?(Frame(eventType: wentDown ? .keyDown : .keyUp, modifiers: modifiers))
             }
+        case .mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged:
+            // Raw deltas straight from the event (dragged carries them too, which is
+            // why we listen for it — mouseMoved goes silent while a button is held).
+            let dx = event.getIntegerValueField(.mouseEventDeltaX)
+            let dy = event.getIntegerValueField(.mouseEventDeltaY)
+            onFrame?(Frame(eventType: .mouseMove,
+                           value: Int16(truncatingIfNeeded: dx),
+                           value2: Int16(truncatingIfNeeded: dy)))
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+            if let bit = MOUSE_BUTTON_MAP[button] {
+                onFrame?(Frame(eventType: .mouseBtn, code: bit, value: 1))
+            }
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            let button = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+            if let bit = MOUSE_BUTTON_MAP[button] {
+                onFrame?(Frame(eventType: .mouseBtn, code: bit, value: 0))
+            }
+        case .scrollWheel:
+            let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)  // vertical
+            let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)  // horizontal
+            onFrame?(Frame(eventType: .scroll,
+                           value: Int16(truncatingIfNeeded: dy),
+                           value2: Int16(truncatingIfNeeded: dx)))
         default:
-            break   // mouse types land here once added to the mask
+            break
         }
         return true
     }
