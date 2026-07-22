@@ -11,3 +11,6 @@ void hid_init();
 void hid_task();
 
 void enqueue_frame(uint8_t frame_buf[7]);
+
+// Live status of usb_keyboard.ready() — for external diagnostics (e.g. LED).
+bool hid_keyboard_ready();

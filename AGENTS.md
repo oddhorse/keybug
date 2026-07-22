@@ -209,12 +209,15 @@ Decoded on the firmware side as a raw 7-byte ring buffer entry (`firmware/src/hi
 a struct cast, but same no-string-parsing/no-dynamic-allocation intent. `mouseBtn` and `scroll`
 frames are sent by the laptop but not yet dispatched by `process_frame()` on the firmware side.
 `consumerDown`/`consumerUp`/`clear` are newer additions to the spec (`frame.h`'s `EventType`
-enum already has them) — nothing sends or handles any of the three yet on either side, and there
-is currently no USB HID interface for consumer control at all (dropped when `hid.cpp` split into
-separate boot-protocol keyboard/mouse interfaces — see Firmware side notes below). Also worth
-noting: `enqueue_frame()`'s keyboard-vs-mouse queue routing (`frame[0] < 3` → keyboard queue,
-else → mouse queue) predates event types 6-8 and will silently misroute them once anything
-actually sends those — needs revisiting alongside whatever handles consumer control/clear.
+enum already has them) — nothing sends or handles `consumerDown`/`consumerUp` yet on either side,
+and there is currently no USB HID interface for consumer control at all (dropped when `hid.cpp`
+split into separate boot-protocol keyboard/mouse interfaces — see Firmware side notes below).
+`enqueue_frame()` now routes by an explicit `switch` on `EventType` (not the old `frame[0] < 3`
+threshold check): `KeyDown`/`KeyUp`/`ConsumerDown`/`ConsumerUp` → keyboard queue, `MouseMove`
+(split into ≤127-magnitude steps)/`MouseButton`/`Scroll` → mouse queue, `Clear` → both. `Control`
+(`0x09`) still has no case and falls into `default`, which currently does nothing (silently
+dropped) rather than misrouting — safe for now, but still needs real dispatch once `control`
+sub-commands are implemented.
 
 ### Firmware side
 - On BLE receive callback: decode frame, immediately construct and send USB HID report
@@ -230,6 +233,35 @@ actually sends those — needs revisiting alongside whatever handles consumer co
 - USB HID polling: request 2ms interval in HID descriptor
 - Keyboard/mouse boot-protocol interfaces + eventual MSC interface (Milestone 2) share a limited
   USB endpoint budget on the nRF52840 TinyUSB port — worth verifying headroom once MSC lands.
+
+**Pre-OS support: verified working, root cause and fix.** Tested against a real BIOS (ASRock
+B550 Phantom Gaming). Two things turned out **not** to be the problem, despite looking plausible:
+extra USB interfaces (tested keyboard-alone, still failed) and the CDC interface backing `Serial`
+(tested a build with `Serial.begin()` never called — `Adafruit_USBD_CDC::begin()` is what calls
+`TinyUSBDevice.addInterface()`, so skipping it gives a genuinely single-HID-interface device —
+still failed). Physical port (rear I/O vs. front-panel header) also turned out not to matter.
+
+The actual causes, both required:
+1. **CSM ("Legacy USB Support") must be enabled in the host's BIOS/UEFI settings.** With CSM
+   disabled, the board is talking to UEFI's native USB HID stack, not the legacy Boot Protocol
+   path this whole section is about — a different code path with different behavior. Not
+   something firmware can work around; it's a settings requirement to document for operators.
+2. **USB soft-connect must happen as early as possible in `setup()`.** `firmware/src/main.cpp`
+   used to run a ~1000ms blocking LED color sequence (`delay(500)` ×2) and `ble_init()` *before*
+   `hid_init()` (which calls `TinyUSBDevice.begin()`, the point the device first becomes visible
+   on the bus). A device already attached at power-on has the BIOS's own POST timeline to work
+   with and this delay didn't matter. A device hot-plugged *after* the BIOS had already finished
+   booting missed a much tighter hot-plug detection window and was never noticed — even though a
+   real off-the-shelf keyboard/mouse hot-plugged fine on the same BIOS/port, ruling out "this BIOS
+   doesn't support hot-plug" as an explanation. Fix: `hid_init()` is now the first call in
+   `setup()`, before the LED sequence, before `ble_init()`, before anything else. Confirmed fixed
+   for both attached-at-power-on *and* hot-plug-after-boot.
+
+Diagnosing this relied on the onboard DotStar LED as a signal, since a BIOS screen has no serial
+monitor available: a distinct color right after `hid_init()` returns (confirms `setup()` isn't
+hung on the `usb_keyboard.ready()` wait), and a continuous red/green tied to live
+`usb_keyboard.ready()` state in `loop()` (confirms whether USB ever finishes configuring, and
+roughly when). Both were removed once the bug was fixed (superseded by a proper LED status color scheme, TBD).
 
 ### Latency budget
 - BLE interval: ~7.5ms (negotiated)

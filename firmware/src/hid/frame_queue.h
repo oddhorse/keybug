@@ -14,7 +14,14 @@ public:
 	bool push(const Frame &frame)
 	{
 		if (count_ == Capacity)
+		{
+#ifdef DEV_BUILD
+			Serial.println("queue is out of space!! dropping frame");
+			Serial.println("frame dropped:");
+			print_frame(frame);
+#endif
 			return false;
+		}
 		queue_[tail_] = frame;
 		tail_ = (tail_ + 1) % Capacity;
 		count_++;

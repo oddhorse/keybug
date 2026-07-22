@@ -40,3 +40,20 @@ Frame parse_frame(const uint8_t raw[7])
 	out.modifiers = raw[6];
 	return out;
 }
+
+#ifdef DEV_BUILD
+void print_frame(const Frame &frame)
+{
+	Serial.print("event_type: ");
+	Serial.print(static_cast<uint8_t>(frame.event_type), HEX);
+	Serial.print("; code: ");
+	Serial.print(frame.code, HEX);
+	Serial.print("; value: ");
+	Serial.print(frame.value);
+	Serial.print("; value2: ");
+	Serial.print(frame.value2);
+	Serial.print("; modifiers: ");
+	Serial.print(frame.modifiers, HEX);
+	Serial.print("\n");
+}
+#endif

@@ -74,18 +74,36 @@ void hid_init()
 	// when this thing starts up the computer seems to think ctrl is held down until you send a ctrl on and ctrl off message
 	// here this fires a fake ctrl on and off sequence to stop that shit
 	// fire an all-clear on keyboard when usb hid is ready to start things off
-	while (!usb_keyboard.ready())
+	//
+	// Bounded wait: some hosts (BIOS/legacy USB) never report ready() at all —
+	// this must not hang setup()/loop() forever if that happens, or NOTHING on
+	// the board works, not just this workaround.
+	const uint32_t READY_TIMEOUT_MS = 2000;
+	uint32_t wait_start = millis();
+	while (!usb_keyboard.ready() && millis() - wait_start < READY_TIMEOUT_MS)
 	{
 		delay(1);
-		Serial.println("usb_hid not ready yet... waiting to send false ctrl up report!");
 	}
-	usb_keyboard.keyboardReport(0, 1, 0);
-	while (!usb_keyboard.ready())
+	if (usb_keyboard.ready())
 	{
-		delay(1);
-		Serial.println("usb_hid not ready yet... waiting to send follow-up blank report!");
+		usb_keyboard.keyboardReport(0, 1, 0);
+		wait_start = millis();
+		while (!usb_keyboard.ready() && millis() - wait_start < READY_TIMEOUT_MS)
+		{
+			delay(1);
+		}
+		if (usb_keyboard.ready())
+			usb_keyboard.keyboardReport(0, 0, 0);
 	}
-	usb_keyboard.keyboardReport(0, 0, 0);
+	else
+	{
+		Serial.println("usb_keyboard never became ready — skipping stuck-ctrl workaround");
+	}
+}
+
+bool hid_keyboard_ready()
+{
+	return usb_keyboard.ready();
 }
 
 static uint8_t held_keys[6] = {0};
@@ -229,22 +247,70 @@ void enqueue_frame(uint8_t raw_frame[7])
 		kbd_push_success = kbd_queue.push(frame);
 		if (!kbd_push_success)
 		{
-// TODO handle push failure
-#ifdef DEV_BUILD
-			Serial.println("kbd queue out of space!! dropping frame");
-#endif
+			// TODO handle push failure
 		}
 		break;
 	case EventType::MouseMove:
+	{
+		// vars for amounts left to move
+		int16_t xIter = frame.value;
+		int16_t yIter = frame.value2;
+
+		// while there's still movement left to make
+		while (xIter != 0 || yIter != 0)
+		{
+			Frame step_frame = frame;
+			// vars for amounts to move this time around
+			int8_t xStep, yStep;
+
+			if (xIter > 127)
+			{
+				xStep = 127;
+				xIter -= 127;
+			}
+			else if (xIter < -128)
+			{
+				xStep = -128;
+				xIter += 128;
+			}
+			else
+			{
+				xStep = xIter;
+				xIter = 0;
+			}
+			if (yIter > 127)
+			{
+				yStep = 127;
+				yIter -= 127;
+			}
+			else if (yIter < -128)
+			{
+				yStep = -128;
+				yIter += 128;
+			}
+			else
+			{
+				yStep = yIter;
+				yIter = 0;
+			}
+
+			step_frame.value = xStep;
+			step_frame.value2 = yStep;
+
+			mouse_push_success = mouse_queue.push(step_frame);
+			if (!mouse_push_success)
+			{
+				// TODO handle push failure
+			}
+		}
+		break;
+	}
 	case EventType::MouseButton:
 	case EventType::Scroll:
 		mouse_push_success = mouse_queue.push(frame);
 		if (!mouse_push_success)
 		{
-// TODO handle push failure
-#ifdef DEV_BUILD
-			Serial.println("mouse queue out of space!! dropping frame");
-#endif
+			// TODO handle push failure
 		}
 		break;
 	case EventType::Clear:
@@ -252,10 +318,7 @@ void enqueue_frame(uint8_t raw_frame[7])
 		mouse_push_success = mouse_queue.push(frame);
 		if (!kbd_push_success || !mouse_push_success)
 		{
-// TODO handle push failure
-#ifdef DEV_BUILD
-			Serial.println("kbd or mouse queue out of space on clear event!! dropping frame");
-#endif
+			// TODO handle push failure
 		}
 		break;
 	default:
