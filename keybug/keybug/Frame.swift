@@ -51,4 +51,3 @@ extension Frame {
         Frame(eventType: .control, code: command.rawValue, value: value)
     }
 }
-

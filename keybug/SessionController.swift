@@ -20,9 +20,15 @@ class SessionController {
     // directly (BLECentral is itself @Observable, so ble.state stays tracked).
     @ObservationIgnored let ble = BLECentral()
     @ObservationIgnored private let capture = InputCapture()
+    @ObservationIgnored private let overlay = CaptureOverlay()
 
     /// Convenience passthrough for the UI.
     var connectionState: ConnectionState { ble.state }
+
+    /// Toggle capture from the UI (mirrors the Fn+Shift chord).
+    func toggleCapture() {
+        capture.toggleCapture()
+    }
 
     /// Wire the callbacks and start the event tap. Call once, from the main
     /// thread (the tap attaches to the current run loop).
@@ -38,6 +44,9 @@ class SessionController {
 
     private func captureChanged(_ on: Bool) {
         isCapturing = on
+
+        // Visual "controlling remote" signal.
+        overlay.setVisible(on)
 
         // Hide the local cursor during capture (reliable while app is frontmost;
         // the overlay window will make this dependable). Ref-counted — the on/off

@@ -188,6 +188,11 @@ final class InputCapture {
         return true
     }
 
+    /// Programmatic toggle (e.g. from the menu bar) — same path as the Fn+Shift chord.
+    func toggleCapture() {
+        setCapturing(!capturing)
+    }
+
     private func setCapturing(_ on: Bool) {
         // Turning off mid-hold (e.g. Shift is down as part of the toggle chord)
         // would leave those keys stuck down on the remote — clear releases them.

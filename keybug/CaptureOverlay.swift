@@ -27,11 +27,21 @@ final class CaptureOverlay {
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
-        p.ignoresMouseEvents = true                  // clicks pass through
+        // Accept mouse events so the cursor counts as "over our window" across the
+        // whole screen — that's what lets CGDisplayHideCursor hide it everywhere,
+        // not just over the menu popup. Harmless: the event tap suppresses all
+        // mouse input before any window sees it while capturing.
+        p.ignoresMouseEvents = false
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         p.contentView = NSHostingView(rootView: CaptureOverlayView())
         p.orderFrontRegardless()
         panel = p
+
+        // Become the active app so CGDisplayHideCursor takes effect — as an
+        // .accessory (menu-bar) app we're otherwise never frontmost, and cursor
+        // hiding only works for the active app. Steals focus for the duration of
+        // capture, which is the intent (you're driving the remote, not this Mac).
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func hide() {

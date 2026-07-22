@@ -8,33 +8,19 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var ble = BLECentral()
-    
-    @State private var capture = InputCapture()
+    @State private var session = SessionController()
 
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
+        VStack(spacing: 8) {
+            Image(systemName: session.isCapturing ? "keyboard.fill" : "keyboard")
                 .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-            Button("Connect") {
-                ble.send(Frame(eventType: .keyDown, code: 0x0B))
-                ble.send(Frame(eventType: .keyUp, code: 0x0B))
-                ble.send(Frame(eventType: .keyDown, code: 0x0C))
-                ble.send(Frame(eventType: .keyUp, code: 0x0C))
-            }
+                .foregroundStyle(session.isCapturing ? .green : .secondary)
+            Text("Connection: \(String(describing: session.connectionState))")
+            Text(session.isCapturing ? "Capturing (Fn+Shift to stop)" : "Idle (Fn+Shift to capture)")
+                .foregroundStyle(.secondary)
         }
         .padding()
-        .onAppear {
-            capture.onCaptureChanged = { on in
-                print("capturing: \(on)")
-            }
-            capture.onFrame = { frame in
-                ble.send(frame)
-            }
-            capture.start()
-        }
+        .onAppear { session.start() }
     }
 }
 
