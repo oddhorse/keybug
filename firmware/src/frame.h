@@ -17,7 +17,8 @@ enum class EventType : uint8_t
 	Scroll = 5,
 	ConsumerDown = 6,
 	ConsumerUp = 7,
-	Clear = 8
+	Clear = 8,
+	Control = 9
 };
 
 struct Frame

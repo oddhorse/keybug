@@ -183,6 +183,28 @@ void hid_mouse_handle(uint8_t btn, int16_t val)
 		hid_mouse_release(btn);
 }
 
+void hid_mouse_scroll(int16_t vert, int16_t horiz)
+{
+	/*
+	i think this zeroes out any held buttons and movements, but it seems like
+	the macos trackpad literally can't send scrolls at the same time as buttons OR movements
+	*/
+	usb_mouse.mouseScroll(0, vert, horiz);
+}
+
+void hid_keyboard_clear()
+{
+	memset(held_keys, 0, sizeof(held_keys));
+	held_modifiers = 0;
+	send_keyboard_state();
+}
+
+void hid_mouse_clear()
+{
+	held_mouse_buttons = 0;
+	usb_mouse.mouseReport(0, held_mouse_buttons, 0, 0, 0, 0);
+}
+
 /**
  * we're making a queue so we can process all the frames in time
  */
@@ -195,47 +217,47 @@ static FrameQueue<16> mouse_queue;
 void enqueue_frame(uint8_t raw_frame[7])
 {
 	Frame frame = parse_frame(raw_frame);
-	bool push_success;
+	bool kbd_push_success,
+		mouse_push_success;
 
 	switch (frame.event_type)
 	{
 	case EventType::KeyDown:
 	case EventType::KeyUp:
-		push_success = kbd_queue.push(frame);
-		break;
-	case EventType::MouseMove:
-	default:
-		push_success = mouse_queue.push(frame);
-		break;
-	}
-
-	if (!push_success)
-	{
-		// TODO handle push failure
-	}
-}
-
-// TODO finish all the event types
-void process_frame(const Frame &frame)
-{
-	switch (frame.event_type)
-	{
-	case EventType::KeyDown:
-		hid_key_down(frame.code, frame.modifiers);
-		break;
-	case EventType::KeyUp:
-		hid_key_up(frame.code, frame.modifiers);
-		break;
-	case EventType::MouseMove:
-		hid_mouse_move(frame.value, frame.value2);
-		break;
-	case EventType::MouseButton:
-		hid_mouse_handle(frame.code, frame.value);
-		break;
-	case EventType::Scroll:
 	case EventType::ConsumerDown:
 	case EventType::ConsumerUp:
+		kbd_push_success = kbd_queue.push(frame);
+		if (!kbd_push_success)
+		{
+// TODO handle push failure
+#ifdef DEV_BUILD
+			Serial.println("kbd queue out of space!! dropping frame");
+#endif
+		}
+		break;
+	case EventType::MouseMove:
+	case EventType::MouseButton:
+	case EventType::Scroll:
+		mouse_push_success = mouse_queue.push(frame);
+		if (!mouse_push_success)
+		{
+// TODO handle push failure
+#ifdef DEV_BUILD
+			Serial.println("mouse queue out of space!! dropping frame");
+#endif
+		}
+		break;
 	case EventType::Clear:
+		kbd_push_success = kbd_queue.push(frame);
+		mouse_push_success = mouse_queue.push(frame);
+		if (!kbd_push_success || !mouse_push_success)
+		{
+// TODO handle push failure
+#ifdef DEV_BUILD
+			Serial.println("kbd or mouse queue out of space on clear event!! dropping frame");
+#endif
+		}
+		break;
 	default:
 		break;
 	}
@@ -269,10 +291,27 @@ void hid_task()
 	{
 		if (usb_keyboard.ready())
 		{
-			Frame pulled_frame;
+			Frame frame;
 			// if queue pop was successful, process the frame pulled
-			if (kbd_queue.pop(pulled_frame))
-				process_frame(pulled_frame);
+			if (kbd_queue.pop(frame))
+			{
+				switch (frame.event_type)
+				{
+				case EventType::KeyDown:
+					hid_key_down(frame.code, frame.modifiers);
+					break;
+				case EventType::KeyUp:
+					hid_key_up(frame.code, frame.modifiers);
+					break;
+				case EventType::ConsumerDown:
+				case EventType::ConsumerUp:
+				case EventType::Clear:
+					hid_keyboard_clear();
+					break;
+				default:
+					break;
+				}
+			}
 		}
 		else
 		{
@@ -287,10 +326,26 @@ void hid_task()
 	{
 		if (usb_mouse.ready())
 		{
-			Frame pulled_frame;
+			Frame frame;
 			// if queue pop was successful, process the frame pulled
-			if (mouse_queue.pop(pulled_frame))
-				process_frame(pulled_frame);
+			if (mouse_queue.pop(frame))
+				switch (frame.event_type)
+				{
+				case EventType::MouseMove:
+					hid_mouse_move(frame.value, frame.value2);
+					break;
+				case EventType::MouseButton:
+					hid_mouse_handle(frame.code, frame.value);
+					break;
+				case EventType::Scroll:
+					hid_mouse_scroll(frame.value, frame.value2);
+					break;
+				case EventType::Clear:
+					hid_mouse_clear();
+					break;
+				default:
+					break;
+				}
 		}
 		else
 		{

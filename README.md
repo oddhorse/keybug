@@ -20,12 +20,15 @@ keyboard and mouse forwarder from a laptop to a physically plugged-in device via
 * [ ] finish implementing the event type handling on firmware side for all types
   * [x] 0x01 keyDown
   * [x] 0x02 keyUp
-  * [ ] 0x03 mouseMove
-  * [ ] 0x04 mouseBtn
-  * [ ] 0x05 scroll
+  * [o] 0x03 mouseMove
+  * [x] 0x04 mouseBtn
+  * [o] 0x05 scroll
   * [ ] 0x06 consumerDown
   * [ ] 0x07 consumerUp
   * [ ] 0x08 clear
+* [ ] do the chunking code to split too-large pointer or scroll movements into several hid events on the firmware side
+* [ ] hide mac cursor or change its appearance when capturing
+* [ ] make mac overlay when capturing
 
 ## reference
 

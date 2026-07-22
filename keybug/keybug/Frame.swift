@@ -35,6 +35,20 @@ enum EventType: UInt8 {
     case scroll = 0x05
     case consumerDown = 0x06
     case consumerUp = 0x07
-    case clear = 0x08   // firmware releases all held keys/modifiers
+    case clear = 0x08     // firmware releases all held keys/modifiers (HID-affecting, queued)
+    case control = 0x09   // board-directed command; never produces HID output
+}
+
+// Sub-commands for the `control` event type, carried in the frame's `code` field.
+// Firmware handles these immediately on receive (not queued behind USB readiness).
+enum ControlCommand: UInt8 {
+    case setCaptureLED = 0x01   // value: 1 = on, 0 = off
+}
+
+extension Frame {
+    /// Convenience for board-directed control frames.
+    static func control(_ command: ControlCommand, value: Int16 = 0) -> Frame {
+        Frame(eventType: .control, code: command.rawValue, value: value)
+    }
 }
 

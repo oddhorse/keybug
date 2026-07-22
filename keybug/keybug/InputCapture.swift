@@ -11,7 +11,7 @@ import Foundation
 final class InputCapture {
     var onFrame: ((Frame) -> Void)?          // SessionController wires this to ble.send
     var onCaptureChanged: ((Bool) -> Void)?  // notify UI / overlay when toggled
-
+    
     /// When true, input is suppressed locally and forwarded to the board.
     /// When false, the tap still runs (to watch for the toggle chord) but
     /// events pass through to this Mac normally.
@@ -21,6 +21,10 @@ final class InputCapture {
     private var runLoopSource: CFRunLoopSource?
     private var modifiers: UInt8 = 0
     private var toggleChordActive = false
+    
+    private var scrollAccumX = 0.0
+    private var scrollAccumY = 0.0
+    private let scrollScale = 0.3   // tune to taste
 
     /// Flip to true to log each decoded event to the console.
     static let verboseLogging = false
@@ -167,11 +171,17 @@ final class InputCapture {
                 onFrame?(Frame(eventType: .mouseBtn, code: bit, value: 0))
             }
         case .scrollWheel:
-            let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)  // vertical
-            let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)  // horizontal
-            onFrame?(Frame(eventType: .scroll,
-                           value: Int16(truncatingIfNeeded: dy),
-                           value2: Int16(truncatingIfNeeded: dx)))
+            let dy = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
+            let dx = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
+            scrollAccumY += dy * scrollScale
+            scrollAccumX += dx * scrollScale
+            let outY = Int16(scrollAccumY.rounded(.towardZero))
+            let outX = Int16(scrollAccumX.rounded(.towardZero))
+            scrollAccumY -= Double(outY)
+            scrollAccumX -= Double(outX)
+            if outY != 0 || outX != 0 {
+                onFrame?(Frame(eventType: .scroll, value: outY, value2: outX))
+            }
         default:
             break
         }

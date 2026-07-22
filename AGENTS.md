@@ -164,9 +164,27 @@ environments, which only understand USB HID Boot Protocol.
 | `0x06` | consumerDown | 0 | 16-bit consumer usage | 0 | 0 |
 | `0x07` | consumerUp | 0 | 16-bit consumer usage | 0 | 0 |
 | `0x08` | clear | 0 | 0 | 0 | 0 |
+| `0x09` | control | sub-type selector | sub-type-dependent | sub-type-dependent | 0 |
 
 Named as `EventType` (`firmware/src/frame.h`) — see that file for the `enum class` + the `Frame`
-struct these fields map onto. Notes on the less obvious fields:
+struct these fields map onto.
+
+**Two categories, different handling:**
+
+- **HID-relay + clear (`0x01`–`0x08`)** — everything that produces host-visible USB HID output,
+  or resets host-visible HID state (`clear`). These go through the keyboard/mouse `FrameQueue`s
+  in `hid.cpp` and are FIFO-ordered, gated on `usb_keyboard.ready()`/`usb_mouse.ready()` — they
+  wait their turn like any other HID report.
+- **control (`0x09`)** — board-directed, never produces HID output. Sub-typed by `code` (which
+  specific control command) rather than functioning as a HID usage code or button index; `value`
+  is the frame's payload if that sub-type needs one. **Not** queued through the HID-relay
+  `FrameQueue`s and not gated on USB HID readiness — it's a different pipe entirely. What actual
+  sub-commands `code` selects, and where `control` frames get dispatched instead of the HID
+  queues, isn't decided/implemented yet — `enqueue_frame()`'s `switch` in `hid.cpp` currently has
+  no `case EventType::Control`, so today it would silently fall into `default` and get routed to
+  the mouse queue, which is wrong once anything actually sends `0x09`.
+
+Notes on the less obvious HID-relay fields:
 
 - `mouseMove`/`scroll` deltas: kept at `i16` on the wire rather than shrunk to `i8` even though a
   single HID mouse report can only carry `int8_t` deltas (`mouseMove`/`mouseScroll` in
